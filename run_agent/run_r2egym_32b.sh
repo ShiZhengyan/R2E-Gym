@@ -1,13 +1,12 @@
 #!/bin/bash
-# filepath: evaluate_qwen_swebench.sh
 
 # Exit on any error
 set -e
 
-echo "Starting SWE-Bench evaluation with Qwen2.5-Coder-32B-Instruct..."
+echo "Starting SWE-Bench evaluation with R2EGym-32B-Agent..."
 
 # Configuration
-MODEL_NAME="openai/Qwen/Qwen2.5-Coder-32B-Instruct"
+MODEL_NAME="openai/R2E-Gym/R2EGym-32B-Agent"
 DATASET="R2E-Gym/SWE-Bench-Verified"
 SPLIT="test"
 MAX_WORKERS=2  # Adjust based on your system capacity
@@ -15,8 +14,8 @@ K=500  # Number of test cases to evaluate
 START_IDX=0
 MAX_STEPS=40
 TEMPERATURE=0
-API_ENDPOINT="http://localhost:8002"  # vLLM server endpoint
-EXP_NAME="qwen2.5-coder-32b-swebench-eval-$(date +%Y%m%d_%H%M%S)"
+API_ENDPOINT="http://localhost:8004"  # vLLM server endpoint
+EXP_NAME="r2egym-32b-agent-swebench-eval-$(date +%Y%m%d_%H%M%S)"
 TRAJ_DIR="./traj"
 export OPENAI_API_KEY="not-needed"
 
