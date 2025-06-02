@@ -15,7 +15,7 @@ from r2egym.agenthub.runtime.docker import DockerRuntime
 from r2egym.agenthub.environment.env import EnvArgs, RepoEnv
 from r2egym.agenthub.agent.agent import AgentArgs, Agent
 
-from docker_bash_utils.docker_list_tags import fetch_docker_tags
+from r2egym.docker_bash_utils.docker_list_tags import fetch_docker_tags
 from r2egym.agenthub.utils.log import get_logger
 from r2egym.logging import setup_logging, INFO
 from r2egym.agenthub.utils.utils import get_parsed_commit

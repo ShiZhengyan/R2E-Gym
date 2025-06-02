@@ -62,11 +62,12 @@ class Agent:
         else:
             self.logger = logger
         self.llm_name = args.llm_name
-        self.llm_base_url = args.llm_base_url or (
-            "http://localhost:8000/v1"
-            if ("openai/" in self.llm_name) or ("hosted_vllm" in self.llm_name)
-            else None
-        )
+        self.llm_base_url = args.llm_base_url
+        # self.llm_base_url = args.llm_base_url or (
+        #     "http://localhost:8000/v1"
+        #     if ("openai/" in self.llm_name) or ("hosted_vllm" in self.llm_name)
+        #     else None
+        # )
         self.system_prompt_template = args.system_prompt
         self.instance_prompt_template = args.instance_prompt
         self.command_files = args.command_files
