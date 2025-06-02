@@ -83,6 +83,7 @@ def runagent(
     num_restarts=1,
     max_steps_absolute=50,
     llm_name="gpt-4o",
+    llm_base_url: Optional[str] = None,
     temperature=0,
     use_fn_calling: bool = True,
 ) -> Optional[str]:
@@ -124,6 +125,8 @@ def runagent(
             Path("./src/r2egym/agenthub/config/edit_non_fn_calling.yaml")
         )
     agent_args.llm_name = llm_name
+    if llm_base_url:
+        agent_args.llm_base_url = llm_base_url
 
     # Initialize the agent
     agent = Agent(name="EditAgent", args=agent_args, logger=logger)
@@ -174,6 +177,7 @@ def runagent_multiple(
     max_steps_absolute=50,
     max_workers: Optional[int] = None,
     llm_name="gpt-4o",
+    llm_base_url: Optional[str] = None,
     use_existing: bool = True,
     skip_existing: bool = False,
     temperature: float = 0,
@@ -270,6 +274,7 @@ def runagent_multiple(
                 num_restarts=num_restarts,
                 max_steps_absolute=max_steps_absolute,
                 llm_name=llm_name,
+                llm_base_url=llm_base_url,
                 temperature=temperature,
                 use_fn_calling=use_fn_calling,
             ): ds_entry[

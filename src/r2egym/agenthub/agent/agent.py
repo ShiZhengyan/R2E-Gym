@@ -62,8 +62,7 @@ class Agent:
         else:
             self.logger = logger
         self.llm_name = args.llm_name
-        self.llm_base_url = (
-            # "http://localhost:8000/v1"
+        self.llm_base_url = args.llm_base_url or (
             "http://localhost:8000/v1"
             if ("openai/" in self.llm_name) or ("hosted_vllm" in self.llm_name)
             else None
