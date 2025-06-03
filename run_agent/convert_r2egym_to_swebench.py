@@ -70,7 +70,7 @@ def convert_r2egym_to_swebench(
     
     # Generate output filename if not provided
     if output_file is None:
-        output_file = str(input_path.with_suffix('.predictions.jsonl'))
+        output_file = str(input_path.with_suffix('.predictions.json'))
     
     output_path = Path(output_file)
     
@@ -79,8 +79,9 @@ def convert_r2egym_to_swebench(
     
     converted_count = 0
     error_count = 0
+    predictions = []
     
-    with open(input_path, 'r') as infile, open(output_path, 'w') as outfile:
+    with open(input_path, 'r') as infile:
         for line_num, line in enumerate(infile, 1):
             line = line.strip()
             if not line:
@@ -114,20 +115,23 @@ def convert_r2egym_to_swebench(
                     model_patch = trajectory.output_patch
                 
                 # Create SWE-bench format entry
-                swebench_entry = {
-                    "model_name_or_path": model_name,
+                prediction = {
                     "instance_id": instance_id,
+                    "model_name_or_path": model_name,
                     "model_patch": model_patch
                 }
                 
-                # Write to output file
-                outfile.write(json.dumps(swebench_entry) + '\n')
+                predictions.append(prediction)
                 converted_count += 1
                 
             except Exception as e:
                 print(f"Error processing line {line_num}: {e}")
                 error_count += 1
                 continue
+    
+    # Write all predictions as JSON array
+    with open(output_path, 'w') as outfile:
+        json.dump(predictions, outfile, indent=2)
     
     print(f"Conversion completed!")
     print(f"Successfully converted: {converted_count} entries")
