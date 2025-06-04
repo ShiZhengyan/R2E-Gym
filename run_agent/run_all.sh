@@ -27,7 +27,7 @@ echo "Starting SWE-Bench evaluation with SWE-agent..."
 # Parse command-line arguments
 RAW_MODEL_NAME="$1"
 API_ENDPOINT="$2"
-MAX_WORKERS="${3:-24}"  # Default to 24 if not provided
+MAX_WORKERS="${3:-8}"  # Default to 24 if not provided
 K="${4:-500}"           # Default to 500 if not provided
 START_IDX="${5:-0}"     # Default to 0 if not provided
 
