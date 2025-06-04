@@ -1,14 +1,12 @@
 #!/bin/bash
-# filepath: run_swe_agent_lm_32b.sh
 
 # Exit on any error
 set -e
 
-echo "Starting SWE-Bench evaluation with SWE-agent-LM-32B..."
+echo "Starting SWE-Bench evaluation with OpenHands-32B-Agent_qwen32B_bs1x8_lr1e-4_ep5..."
 
 # Configuration
-MODEL_NAME="openai/SWE-bench/SWE-agent-LM-32B"
-API_ENDPOINT="http://localhost:8007"  # vLLM server endpoint
+MODEL_NAME="openai/OpenHands-32B-Agent_qwen32B_bs1x8_lr1e-4_ep5"
 DATASET="R2E-Gym/SWE-Bench-Verified"
 SPLIT="test"
 MAX_WORKERS=2  # Adjust based on your system capacity
@@ -16,10 +14,8 @@ K=500  # Number of test cases to evaluate
 START_IDX=0
 MAX_STEPS=40
 TEMPERATURE=0
-MODEL_BASENAME=$(basename "${MODEL_NAME}")
-DATASET_BASENAME=$(basename "${DATASET}")
-EXP_NAME=$(echo "${MODEL_BASENAME}-${DATASET_BASENAME}" | tr '[:upper:]' '[:lower:]')
-
+API_ENDPOINT="http://localhost:8010"  # vLLM server endpoint
+EXP_NAME="OpenHands-32B-Agent_qwen32B_bs1x8_lr1e-4_ep5-swebench-eval-$(date +%Y%m%d_%H%M%S)"
 TRAJ_DIR="./traj"
 export OPENAI_API_KEY="not-needed"
 

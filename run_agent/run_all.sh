@@ -87,7 +87,7 @@ uv run python src/r2egym/agenthub/run/edit.py runagent_multiple \
   --llm_base_url "${API_ENDPOINT}/v1" \
   --use_fn_calling False \
   --temperature "${TEMPERATURE}" \
-  --use_existing True
+  --use_existing False
 
 if [ $? -ne 0 ]; then
     echo "Error: Trajectory generation failed"
