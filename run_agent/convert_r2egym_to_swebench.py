@@ -27,7 +27,8 @@ def extract_model_name_from_filename(filename: str) -> str:
     parts = name.split('-')
     
     # Find where the task/eval part starts (like 'swebench', 'eval', etc.)
-    task_indicators = ['swebench', 'eval', 'test', 'train']
+    # Include SWE-Bench dataset variants (SWE-Bench-Verified, SWE-Bench-Lite)
+    task_indicators = ['swebench', 'eval', 'test', 'train', 'verified', 'lite', 'bench', 'swe']
     model_parts = []
     
     for part in parts:

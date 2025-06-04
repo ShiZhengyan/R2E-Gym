@@ -12,7 +12,7 @@ if [ $# -lt 2 ]; then
     echo "  model_name    : Model name (e.g., SWE-bench/SWE-agent-LM-32B)"
     echo "                  'openai/' prefix will be added automatically"
     echo "  api_endpoint  : API endpoint URL (e.g., http://localhost:8007)"
-    echo "  max_workers   : Number of workers (default: 48)"
+    echo "  max_workers   : Number of workers (default: 24)"
     echo "  k             : Number of test cases (default: 500)"
     echo "  start_idx     : Starting index (default: 0)"
     echo ""
@@ -35,6 +35,11 @@ START_IDX="${5:-0}"     # Default to 0 if not provided
 MODEL_NAME="openai/${RAW_MODEL_NAME}"
 DATASET="R2E-Gym/SWE-Bench-Verified"
 SPLIT="test"
+MAX_STEPS=40
+TEMPERATURE=0
+MODEL_BASENAME=$(basename "${MODEL_NAME}")
+DATASET_BASENAME=$(basename "${DATASET}")
+EXP_NAME=$(echo "${MODEL_BASENAME}-${DATASET_BASENAME}" | tr '[:upper:]' '[:lower:]')
 TRAJ_DIR="./traj"
 export OPENAI_API_KEY="not-needed"
 
