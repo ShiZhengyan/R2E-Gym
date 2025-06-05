@@ -11,4 +11,5 @@ python -m swebench.harness.run_evaluation \
     --dataset_name SWE-bench/SWE-bench_Verified \
     --predictions_path "$1" \
     --max_workers 24 \
-    --run_id swebench_verified
+    --run_id swebench_verified \
+    --report_dir swebench_eval_results
