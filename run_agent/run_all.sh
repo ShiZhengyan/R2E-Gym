@@ -132,7 +132,8 @@ python -m swebench.harness.run_evaluation \
     --dataset_name SWE-bench/SWE-bench_Verified \
     --predictions_path "${PREDICTIONS_FILE}" \
     --max_workers ${MAX_WORKERS} \
-    --run_id swebench_verified
+    --run_id swebench_verified \
+    --report_dir swebench_eval_results
 
 if [ $? -eq 0 ]; then
     echo ""
