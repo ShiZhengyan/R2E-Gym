@@ -23,7 +23,7 @@ traj_ablation/
 accuracy_by_steps*.png
 *filtered*.jsonl
 test_traj
-# filtered*.jsonl
+uv.lock
 traj_testgen/
 traj_testverifier/
 v1
