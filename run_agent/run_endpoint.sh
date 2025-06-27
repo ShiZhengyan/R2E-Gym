@@ -1,0 +1,12 @@
+docker run --runtime=nvidia --gpus=all \
+    -v ~/.cache/huggingface:/root/.cache/huggingface \
+    -p 8008:8000 \
+    --env "CUDA_VISIBLE_DEVICES=0,1,2,3" \
+    --ipc=host \
+    vllm/vllm-openai:latest \
+    --model R2E-Gym/R2EGym-32B-Agent \
+    --trust-remote-code \
+    --tensor-parallel-size 4 \
+    --enable-prefix-caching \
+    --disable-log-requests \
+    --gpu-memory-utilization 0.95
