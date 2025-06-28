@@ -1,6 +1,6 @@
 docker run --runtime=nvidia --gpus=all \
     -v ~/.cache/huggingface:/root/.cache/huggingface \
-    -p 8008:8000 \
+    -p 8000:8000 \
     --env "CUDA_VISIBLE_DEVICES=0,1,2,3" \
     --ipc=host \
     vllm/vllm-openai:latest \
