@@ -1,0 +1,45 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Python Debugger: Current File",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal",
+            "justMyCode": false
+        },
+        {
+            "name": "Debug SWE-Bench Evaluation Script",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/src/r2egym/agenthub/run/edit.py",
+            "args": [
+                "runagent_multiple",
+                // "--dataset", "/home/zhengyanshi/project/SWE-smith/logs/automated_pipeline_o3_bugs100_combos200_depth2_workers32_nbugs1_patches2_perfile2_permodule10/astropy__astropy.26d14786/task_insts/astropy__astropy.26d14786_ps.json",
+                "--dataset", "R2E-Gym/SWE-Bench-Verified",
+                "--split", "test",
+                "--k", "1",
+                "--traj_dir", "./traj",
+                "--exp_name", "run-debug",
+                "--start_idx", "0",
+                "--max_steps", "40",
+                "--max_workers", "1",
+                "--llm_name", "gpt-4o",
+                "--use_fn_calling", "True",
+                "--temperature", "0",
+                "--use_existing", "True"
+            ],
+            "console": "integratedTerminal",
+            "env": {
+                "OPENAI_API_KEY": "not-needed"
+            },
+            "cwd": "${workspaceFolder}",
+            "preLaunchTask": "activate-venv",
+            "justMyCode": false
+        }
+    ]
+}

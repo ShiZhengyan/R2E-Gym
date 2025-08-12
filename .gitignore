@@ -40,6 +40,7 @@ traj_swebv/
 traj_testgen_final/
 traj_testverifier_r2e/
 notebooks/
+logs
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

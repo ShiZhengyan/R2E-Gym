@@ -35,11 +35,12 @@ START_IDX="${5:-0}"     # Default to 0 if not provided
 MODEL_NAME="openai/${RAW_MODEL_NAME}"
 DATASET="R2E-Gym/SWE-Bench-Verified"
 SPLIT="test"
-MAX_STEPS=75
-TEMPERATURE=0.5
+MAX_STEPS=100
+TEMPERATURE=1
+NUM_ITERATIONS=3
 MODEL_BASENAME=$(basename "${MODEL_NAME}")
 DATASET_BASENAME=$(basename "${DATASET}")
-BASE_EXP_NAME=$(echo "${MODEL_BASENAME}-${DATASET_BASENAME}" | tr '[:upper:]' '[:lower:]')
+BASE_EXP_NAME=$(echo "${MODEL_BASENAME}-${DATASET_BASENAME}-steps${MAX_STEPS}-temp${TEMPERATURE}" | tr '[:upper:]' '[:lower:]')
 TRAJ_DIR="./traj"
 export OPENAI_API_KEY="not-needed"
 
@@ -54,6 +55,8 @@ echo "  Split: ${SPLIT}"
 echo "  Max Workers: ${MAX_WORKERS}"
 echo "  Test Cases: ${K}"
 echo "  Max Steps: ${MAX_STEPS}"
+echo "  Temperature: ${TEMPERATURE}"
+echo "  Number of Iterations: ${NUM_ITERATIONS}"
 echo "  Base Experiment Name: ${BASE_EXP_NAME}"
 echo "  Output Directory: ${TRAJ_DIR}"
 echo ""
@@ -71,10 +74,10 @@ echo ""
 
 source .venv/bin/activate
 
-# Run 3 iterations
-for ITERATION in {1..3}; do
+# Run iterations
+for ITERATION in $(seq 1 ${NUM_ITERATIONS}); do
     echo "=========================================="
-    echo "Starting Iteration ${ITERATION}/3"
+    echo "Starting Iteration ${ITERATION}/${NUM_ITERATIONS}"
     echo "=========================================="
     
     # Update experiment name with iteration
@@ -162,5 +165,5 @@ for ITERATION in {1..3}; do
 done
 
 echo "=========================================="
-echo "All 3 iterations completed successfully!"
+echo "All ${NUM_ITERATIONS} iterations completed successfully!"
 echo "=========================================="
