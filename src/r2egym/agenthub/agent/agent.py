@@ -4,6 +4,10 @@ import copy
 import yaml
 import json
 import time
+import uuid
+import hmac
+import hashlib
+import subprocess
 from pathlib import Path
 from dataclasses import dataclass, asdict
 from typing import Any, Dict, List, Optional, Tuple
@@ -11,6 +15,7 @@ from pydantic import BaseModel
 
 import litellm
 from openai import OpenAI
+from dotenv import load_dotenv
 
 from r2egym.agenthub.action import Action
 from r2egym.agenthub.utils.log import get_logger
@@ -30,6 +35,35 @@ from r2egym.agenthub.tools import (
 import traceback
 logger = get_logger(__name__)  # Logger for this module
 MAX_CONTEXT_TOKENS = 65536
+
+# CopilotClaudeModel supported models from SWE-agent
+COPILOT_CLAUDE_SUPPORTED_MODELS = [
+    "claude-sonnet-4",
+    "gpt-4.1-2025-04-14",
+    "gpt-3.5-turbo-0613",
+    "gpt-4o-mini-2024-07-18",
+    "gpt-4-0613",
+    "gpt-4-0125-preview",
+    "gpt-4o-2024-11-20",
+    "gpt-4o-2024-05-13",
+    "gpt-4o-2024-08-06",
+    "o3-mini-2025-01-31",
+    "o3-mini-paygo",
+    "gpt-4o-copilot",
+    "text-embedding-3-small",
+    "claude-3.5-sonnet",
+    "claude-3.7-sonnet",
+    "claude-3.7-sonnet-thought",
+    "claude-opus-4",
+    "claude-opus-41",
+    "gemini-2.0-flash-001",
+    "o3-2025-04-16",
+    "o4-mini-2025-04-16",
+    "gpt-4.1-mini-2025-04-14",
+    "gpt-4.1-nano-2025-04-14",
+    "oswe-vscode",
+    "gpt-4.1-oswe-control",
+]
 
 ##############################################################################
 # AgentArgs Dataclass
@@ -201,15 +235,26 @@ class Agent:
                     kwargs = {}
                 if "o3" not in self.llm_name and "o4" not in self.llm_name:
                     kwargs["temperature"] = temperature
-                response = litellm.completion(
-                    model=self.llm_name,
-                    tools=tools,
-                    messages=messages_,
-                    timeout=self.llm_timeout,
-                    api_base=self.llm_base_url,
-                    # max_tokens=3000,
-                    **kwargs,
-                )
+                # Use CopilotClaudeModel API if model is supported
+                if self.llm_name in COPILOT_CLAUDE_SUPPORTED_MODELS:
+                    response = self._copilot_claude_api_call(
+                        model=self.llm_name,
+                        tools=tools,
+                        messages=messages_,
+                        timeout=self.llm_timeout,
+                        api_base=self.llm_base_url,
+                        **kwargs,
+                    )
+                else:
+                    response = litellm.completion(
+                        model=self.llm_name,
+                        tools=tools,
+                        messages=messages_,
+                        timeout=self.llm_timeout,
+                        api_base=self.llm_base_url,
+                        # max_tokens=3000,
+                        **kwargs,
+                    )
                 self.logger.warning(f"Querying LLM complete")
                 break
             except Exception as e:
@@ -223,6 +268,127 @@ class Agent:
         # End timer, calculate total execution time, and include in response
         exec_time = time.time() - start_time
         return response, exec_time
+
+    def _get_copilot_client(self):
+        """Get or create a cached GitHub Copilot client"""
+        if not hasattr(self, '_copilot_client') or self._copilot_client is None:
+            self._copilot_client = self._create_copilot_client()
+        return self._copilot_client
+
+    def _create_copilot_client(self):
+        """Create GitHub Copilot client with proper authentication"""
+        def create_request_hmac(hmac_secret: str) -> str:
+            """Create HMAC for request authentication"""
+            current = str(int(time.time()))
+            signature = hmac.new(
+                hmac_secret.encode("utf-8"), current.encode("utf-8"), hashlib.sha256
+            ).hexdigest()
+            return f"{current}.{signature}"
+
+        def fetch_token() -> str:
+            """Fetch GitHub Copilot token using Node.js script"""
+            try:
+                vscode_copilot_dir = (
+                    os.environ.get("VSCODE_COPILOT_DIR", os.path.expanduser("~/repo/vscode-copilot"))
+                )
+                vscode_copilot_dir = os.path.expanduser(vscode_copilot_dir)
+                if not os.path.exists(vscode_copilot_dir):
+                    raise ValueError(f"vscode-copilot directory not found at: {vscode_copilot_dir}")
+                
+                result = subprocess.run(
+                    ["npx", "tsx", "src/util/node/fetch-token-standalone.js"],
+                    capture_output=True,
+                    text=True,
+                    cwd=vscode_copilot_dir,
+                )
+                
+                if result.returncode != 0:
+                    raise ValueError(f"Failed to fetch token: {result.stderr}")
+                
+                token = result.stdout.strip()
+                if not token:
+                    raise ValueError("fetch-token.js returned empty output")
+                
+                return token
+            except Exception as e:
+                raise ValueError(f"Failed to get Copilot token: {e}")
+
+        # Load environment variables
+        vscode_copilot_dir = (
+            os.environ.get("VSCODE_COPILOT_DIR", os.path.expanduser("~/repo/vscode-copilot"))
+        )
+        env_file_path = os.path.expanduser(os.path.join(vscode_copilot_dir, ".env"))
+
+        if not os.environ.get("HMAC_SECRET") and os.path.exists(env_file_path):
+            try:
+                load_dotenv(dotenv_path=env_file_path)
+            except Exception as e:
+                self.logger.warning("Failed to load .env file: %s", e)
+
+        hmac_secret = os.environ.get("HMAC_SECRET")
+        if not hmac_secret:
+            raise ValueError("HMAC_SECRET not found in environment variables")
+        
+        bearer_token = fetch_token()
+        hmac_value = create_request_hmac(hmac_secret)
+
+        # Create OpenAI client
+        client = OpenAI(
+            api_key=bearer_token,
+            base_url=self.llm_base_url or "https://api.enterprise.githubcopilot.com",
+            default_headers={
+                "X-Interaction-Type": "conversation-agent",
+                "OpenAI-Intent": "conversation-agent",
+                "X-GitHub-Api-Version": "2025-05-01",
+                "Copilot-Integration-Id": "vscode-chat-dev",
+                "VScode-SessionId": "r2egym-session",
+                "VScode-MachineId": "r2egym-machine",
+                "X-Interaction-Id": str(uuid.uuid4()),
+                "X-Initiator": "agent",
+                "Editor-Version": "r2egym/1.0",
+                "Editor-Plugin-Version": "r2egym/1.0",
+                "Request-Hmac": hmac_value,
+            },
+            timeout=self.llm_timeout,
+        )
+        return client
+
+    def _copilot_claude_api_call(self, model: str, messages: List[Dict[str, str]], 
+                                 tools: Optional[List[Dict]] = None, timeout: int = 60, 
+                                 api_base: Optional[str] = None, **kwargs) -> Any:
+        """
+        Call the GitHub Copilot Claude API using the cached client.
+        """
+        client = self._get_copilot_client()
+
+        # Build chat request
+        request_kwargs = {
+            "model": model,
+            "messages": messages,
+            "max_tokens": 8192,
+        }
+        
+        # Add temperature and top_p for models that support them
+        not_temperature_models = [
+            "o3-mini-2025-01-31",
+            "o3-mini-paygo", 
+            "o3-2025-04-16",
+            "o4-mini-2025-04-16",
+        ]
+        if model not in not_temperature_models:
+            if "temperature" in kwargs:
+                request_kwargs["temperature"] = kwargs["temperature"]
+            if "top_p" in kwargs:
+                request_kwargs["top_p"] = kwargs["top_p"]
+        
+        if tools:
+            request_kwargs["tools"] = tools
+            request_kwargs["tool_choice"] = "auto"
+
+        # Make the API call
+        response = client.chat.completions.create(**request_kwargs)
+        
+        return response
 
     def parse_response(self, response: Dict[str, Any]) -> Tuple[str, Action]:
         """
