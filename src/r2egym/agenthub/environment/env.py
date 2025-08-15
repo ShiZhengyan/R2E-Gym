@@ -23,6 +23,7 @@ class EnvArgs:
     ds: Dict
     repo_path: Optional[str] = None
     docker_image: Optional[str] = None
+    use_1r1m: bool = False
 
 
 class RepoEnv(gym.Env):
@@ -45,7 +46,7 @@ class RepoEnv(gym.Env):
             #logging.disable(logging.CRITICAL)  # Disable all logging
 
         self.runtime = DockerRuntime(
-            ds=args.ds, command=["/bin/bash", "-l"], logger=self.logger, backend=backend
+            ds=args.ds, command=["/bin/bash", "-l"], logger=self.logger, backend=backend, use_1r1m=args.use_1r1m
         )
 
         self.args = args
@@ -72,7 +73,7 @@ class RepoEnv(gym.Env):
         self.done = False
         # also just recreate env again with the same args
         self.runtime = DockerRuntime(
-            ds=self.args.ds, command=["/bin/bash", "-l"], logger=self.logger, backend=self.backend
+            ds=self.args.ds, command=["/bin/bash", "-l"], logger=self.logger, backend=self.backend, use_1r1m=self.args.use_1r1m
         )
         return self.observation  # self.get_observation()
 

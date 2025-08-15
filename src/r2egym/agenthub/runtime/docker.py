@@ -64,7 +64,7 @@ from swebench.harness.constants import (
     ResolvedStatus,
     TestStatus,
 )
-from swebench.harness.test_spec.test_spec import TestSpec
+from swebench.harness.test_spec.test_spec import TestSpec, make_test_spec
 from swebench.harness.log_parsers import MAP_REPO_TO_PARSER, get_eval_type
 from swebench.harness.grading import get_eval_tests_report, get_resolution_status
 
@@ -89,6 +89,7 @@ class DockerRuntime(ExecutionEnvironment):
         command: str = "/bin/bash",
         logger=None,
         backend="docker",
+        use_1r1m: bool = False,  # whether to use 1r1m mode
         **docker_kwargs,
     ):
         # check if ds is provided (required for all dockers moving forward)
@@ -105,8 +106,9 @@ class DockerRuntime(ExecutionEnvironment):
         else:
             raise ValueError(f"No docker image found in ds: {self.ds}")
         self.docker_image = ds_image if not docker_image else docker_image
-        self.swebench_verified = "swebench" in self.docker_image
-        self.swesmith = "swesmith" in self.docker_image
+        self.is_1r1m = use_1r1m
+        self.swebench_verified = "swebench" in self.docker_image and not self.is_1r1m
+        self.swesmith = "swesmith" in self.docker_image and not self.is_1r1m
         if self.swesmith:
             image_name = self.ds['image_name'].replace('__', '_1776_')
             self.swebench_verified = False
@@ -120,16 +122,21 @@ class DockerRuntime(ExecutionEnvironment):
         self.repo_path = repo_path
         self.alt_path = alt_path
         self.command = command
-        self.repo_name = (
-            self.ds["repo"] if self.swebench_verified or self.swesmith else self.ds["repo_name"]
-        )
-        if not self.swesmith:
+        if self.swebench_verified or self.swesmith:
+            # For swebench verified or swesmith, use the repo name from ds
+            self.repo_name = self.ds["repo_name"]
+        else:
+            self.repo_name = self.ds["repo"]
+        if not self.swesmith and not self.is_1r1m:
             self.commit_json = (
                 self.ds["parsed_commit"]
                 if self.swebench_verified
                 else self.ds["parsed_commit_content"]
             )
             self.commit = ParsedCommit(**json.loads(self.commit_json))
+        else:
+            # For swesmith or 1r1m mode, no commit object is needed
+            self.commit = None
         self.docker_kwargs = docker_kwargs
         if logger is None:
             if self.backend == "docker":
@@ -164,6 +171,8 @@ class DockerRuntime(ExecutionEnvironment):
 
         # Initialize the environment
         self.setup_env()
+
+        
         if self.backend == "kubernetes":
             self.logger.info("Kubernetes environment initialized")
         else:
@@ -476,7 +485,7 @@ class DockerRuntime(ExecutionEnvironment):
             self.run(f"git checkout {commit_id}")
             # Setup the run_test.sh script for subsequent testing.  
             test_command, _ = get_test_command(self.ds)
-            eval_script_content = "\n".join(
+            eval_script_content = "\n".join( # TODO: Why do they need the eval_script_content here?
                 [
                     "#!/bin/bash",
                     "set -uxo pipefail",
@@ -535,11 +544,147 @@ class DockerRuntime(ExecutionEnvironment):
                 f"Error setting up environment: {repr(e)} @ {self.docker_image}"
             )
 
+    def setup_env_1r1m(self):
+        """Setup environment for 1r1m (One Repo One Model) mode."""
+        try:
+            # For 1r1m mode, we need to create the test spec and eval script
+            # similar to how SWE-bench handles test evaluation
+            
+            # First, create the test spec to get proper eval script
+            self._create_1r1m_test_spec_and_eval_script()
+            
+            # Set up environment paths similar to swesmith
+            self.run(f"ln -s /opt/miniconda3/envs/testbed /root/.venv")
+            self.run('echo \'export PATH="/usr/local/bin:$PATH"\' >> ~/.bashrc')
+            self.run("python -m pip install chardet")
+            
+            # Apply 1r1m patch if available (after environment setup)
+            if "patch" in self.ds and self.ds["patch"]:
+                self._apply_1r1m_patch()
+
+            self.logger.info("1r1m environment setup completed")
+        except Exception as e:
+            self.logger.error(f"Error setting up 1r1m environment: {repr(e)}")
+
+    def _apply_1r1m_patch(self):
+        """Apply the patch for 1r1m mode."""
+        try:
+            patch_data = self.ds["patch"]
+            self.logger.info(f"Applying 1r1m patch for {self.repo_name}")
+
+            # Set git config
+            self.run("git config user.email 'r2egym@example.com'")
+            self.run("git config user.name 'R2E-Gym Agent'")
+
+            # Write patch to temporary file
+            patch_content = f"cat <<'PATCH_EOF' > /tmp/one_time.patch\n{patch_data}\nPATCH_EOF"
+            output, error_code = self.run(patch_content)
+            if error_code != "0":
+                raise RuntimeError(f"Failed to write patch file: {output}")
+            
+            # Apply the patch
+            output, error_code = self.run("git apply /tmp/one_time.patch")
+            if error_code != "0":
+                raise RuntimeError(f"Failed to apply patch: {output}")
+
+            # Commit the changes
+            self.run("git add -A")
+            output, error_code = self.run("git commit -m 'Applied one-time patch for 1r1m task'")
+    
+            self.logger.info("Successfully applied 1r1m patch")
+        except Exception as e:
+            raise RuntimeError(f"Failed to apply one-time patch: {e}") from e
+
+    def _create_1r1m_test_spec_and_eval_script(self):
+        """Create test spec and eval script for 1r1m mode based on SWE-bench dataset."""
+        # Load SWE-bench dataset to get proper test specs
+        from datasets import load_dataset
+
+        seed_swebench_dataset = load_dataset("ZhengyanShi/SWE-bench_Verified_Temporal_9", split="train")
+
+        # Create mapping from swebench instance ID to instance
+        swebench_instance_id_to_instance_mapping = {}
+        for instance in seed_swebench_dataset:
+            repo = instance["repo"]
+            base_commit = instance["base_commit"]
+            swebench_instance_id = f"{repo.replace('/', '__')}.{base_commit[:8]}"
+            
+            # Store the test spec
+            swebench_instance_id_to_instance_mapping[swebench_instance_id] = make_test_spec(
+                instance,
+                namespace="swebench",
+                instance_image_tag="latest",
+            )
+        
+        # Get swebench instance ID from the current 1r1m instance
+        def get_swebench_instance_id(instance_id):
+            # Extract repo and commit from 1r1m instance_id format
+            parts = instance_id.split('.')
+            if len(parts) >= 2:
+                repo_part = parts[0]
+                commit_part = parts[1][:8]  # Take first 8 chars
+                return f"{repo_part}.{commit_part}"
+            return instance_id
+        
+        swebench_instance_id = get_swebench_instance_id(self.ds.get("instance_id", ""))
+        
+        # Get the test spec from the mapping
+        test_spec = swebench_instance_id_to_instance_mapping.get(swebench_instance_id)
+        
+        assert test_spec is not None, f"No test spec found for {swebench_instance_id}. Cannot create 1r1m eval script."
+        
+        # Get test command and directives from the 1r1m dataset entry
+        test_cmd = MAP_REPO_VERSION_TO_SPECS[test_spec.repo][test_spec.version]["test_cmd"]
+        if isinstance(test_cmd, list):
+            test_cmd = test_cmd[-1]  # Use the last command if it's a list
+            
+        test_directives = self.ds.get("FAIL_TO_PASS", [])
+        if test_directives:
+            entrypoint = f"{test_cmd} {' '.join(test_directives)}"
+        else:
+            entrypoint = test_cmd
+        
+        # Update eval script list with the correct test command
+        eval_script_list = list(test_spec.eval_script_list)  # Make a copy
+        
+        # Find and replace the test command line in eval script
+        found_test_cmd_line = False
+        for i, line in enumerate(eval_script_list):
+            if line.strip().startswith(test_cmd):
+                eval_script_list[i] = entrypoint
+                found_test_cmd_line = True
+                break
+        
+        assert found_test_cmd_line, f"Could not find line starting with '{test_cmd}' in eval_script_list"
+        
+        # Create the eval script content using the test spec's eval_script property
+        eval_script_content = "\n".join([
+            "#!/bin/bash",
+            "set -uxo pipefail"
+        ] + eval_script_list) + "\n"
+        
+        # Write the script to a temporary file and copy to container
+        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.sh') as temp_file:
+            temp_file.write(eval_script_content)
+            temp_file.flush()
+            temp_file_path = temp_file.name
+        
+        # Copy the file to container and clean up
+        self.copy_to_container(temp_file_path, "/run_tests.sh")
+        os.unlink(temp_file_path)  # Clean up the temporary file
+        
+        # Make the script executable
+        self.run("chmod +x /run_tests.sh")
+        
+        self.logger.info(f"Created 1r1m eval script with test command: {entrypoint}")
+
     def setup_env(self):
         if self.swebench_verified:
             return self.setup_env_swebench()
         elif self.swesmith:
             return self.setup_env_swesmith()
+        elif self.is_1r1m:
+            return self.setup_env_1r1m()
 
         try:
             # setup venv
@@ -1007,7 +1152,6 @@ class DockerRuntime(ExecutionEnvironment):
                 return 0.0
         return 1.0
 
-
     def _calculate_reward_swebench(self, get_test_output=False, timeout: int = 300) -> float:
         # gt_test_patch = self.commit.get_patch(test_file=True,non_test_file=False)
         # self.apply_patch(gt_test_patch)
@@ -1143,3 +1287,4 @@ class DockerRuntime(ExecutionEnvironment):
         # output, error_code = self.run(f"git checkout {self.current_branch}")
 
         return output, error_code
+

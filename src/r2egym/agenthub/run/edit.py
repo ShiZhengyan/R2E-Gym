@@ -42,6 +42,12 @@ file_lock = threading.Lock()
 ##############################################################################
 # Utility Function
 ##############################################################################
+
+
+def get_docker_image_key(use_1r1m: bool = False) -> str:
+    """Returns the appropriate docker image key based on task type."""
+    return "image_name" if use_1r1m else "docker_image"
+
 def get_docker_images(repo_name) -> List[str]:
     """
     Fetches the list of Docker images available for the base image.
@@ -76,16 +82,18 @@ def prepull_docker_image(docker_image: str) -> bool:
         return False
 
 
-def prepull_docker_images(ds_selected: List[Dict], max_workers: Optional[int] = None) -> None:
+def prepull_docker_images(ds_selected: List[Dict], use_1r1m: bool = False, max_workers: Optional[int] = None) -> None:
     """
     Prepulls all Docker images in parallel before starting the main execution.
     
     Args:
-        ds_selected: List of dataset entries containing docker_image keys
+        ds_selected: List of dataset entries containing docker_image or image_name keys
+        use_1r1m: Whether to use 1r1m mode (affects key name)
         max_workers: Maximum number of threads for parallel pulling
     """
     # Extract unique Docker images
-    docker_images = list(set([ds_entry["docker_image"] for ds_entry in ds_selected]))
+    docker_key = get_docker_image_key(use_1r1m)
+    docker_images = list(set([ds_entry[docker_key] for ds_entry in ds_selected]))
     logger.info(f"Starting parallel prepull of {len(docker_images)} unique Docker images...")
     
     # Use ThreadPoolExecutor for I/O bound operations like Docker pulls
@@ -201,6 +209,7 @@ def runagent(
     max_iterations: int = 1,
     scaffold: str = "r2egym",
     max_tokens: int = 65536,
+    use_1r1m: bool = False,  # New parameter for 1r1m mode
 ) -> Optional[str]:
     """
     Runs the editagent agent on a specified Docker image.
@@ -211,13 +220,15 @@ def runagent(
         jsonl_file: Path to the JSONL file to save results. If not provided, generated using traj_dir and exp_name.
         exp_name: Experiment name. Used if jsonl_file is not provided. If not provided, a unique name is generated.
     """
+    docker_key = get_docker_image_key(use_1r1m)
+    docker_image = ds[docker_key]
     logger = setup_logging(
-        name=ds["docker_image"].replace("/", "_"),
-        log_file=f"run_logs/{exp_name}/{ds['docker_image'].replace('/', '_')}.log",
+        name=docker_image.replace("/", "_"),
+        log_file=f"run_logs/{exp_name}/{docker_image.replace('/', '_')}.log",
         console=True,
         level=INFO,
     )
-    logger.info(f"Starting editagent on Docker image: {ds['docker_image']}")
+    logger.info(f"Starting editagent on Docker image: {docker_image}")
     logger.info(f"Using LLM: {llm_name}")
     logger.info(f"Max Steps: {max_steps}")
 
@@ -227,10 +238,12 @@ def runagent(
         exp_name = datetime.now().strftime("%Y%m%d_%H%M%S")
 
     # Initialize environment arguments
-    env_args = EnvArgs(ds=ds)
+    env_args = EnvArgs(ds=ds, use_1r1m=use_1r1m)
 
     # Initialize the RepoEnv
     env = RepoEnv(env_args, logger=logger, backend=backend)
+
+    
     # set agent args
     if use_fn_calling:
         assert scaffold != "sweagent", "SWEagent scaffold does not support fn calling"
@@ -262,7 +275,7 @@ def runagent(
         )
     except Exception as e:
         logger.error(
-            f"Error during agent run for Docker image {ds['docker_image']}: {e}"
+            f"Error during agent run for Docker image {docker_image}: {e}"
         )
         return None
 
@@ -281,9 +294,9 @@ def runagent(
     trajectory.reward_calc_time = reward_calc_time # time taken to calculate reward
     logger.warning(f"time taken to calculate reward in seconds: {reward_calc_time:.2f}")
 
-    logger.info(f"editagent completed for Docker image: {ds['docker_image']}")
+    logger.info(f"editagent completed for Docker image: {docker_image}")
     # close env and docker runtime
-    logger.info(f"Closing environment for Docker image: {ds['docker_image']}")
+    logger.info(f"Closing environment for Docker image: {docker_image}")
     return trajectory.model_dump_json()
 
 
@@ -309,6 +322,7 @@ def runagent_multiple(
     scaffold: str = "r2egym",
     prepull_images: bool = False,
     max_tokens: int = 65536,
+    use_1r1m: bool = False,  # New parameter for 1r1m mode
 ):
     """
     Runs the editagent agent on the first k Docker images.
@@ -323,7 +337,10 @@ def runagent_multiple(
         prepull_images: Whether to prepull Docker images in parallel before starting execution.
     """
     # Load the dataset
-    ds = load_dataset(dataset, split=split)
+    if dataset.endswith('.json'):
+        ds = load_dataset('json', data_files=dataset, split=split)
+    else:
+        ds = load_dataset(dataset, split=split)
     logger.info(f"{len(ds)}, {k}, {start_idx}")
     # shuffle the dataset
     ds = ds.shuffle(seed=42)
@@ -355,35 +372,39 @@ def runagent_multiple(
                 existing_dockers = []
                 for line in f.readlines():
                     try:
+                        docker_key = get_docker_image_key(use_1r1m)
                         existing_dockers.append(
                             Trajectory.load_from_model_dump_json(line).ds[
-                                "docker_image"
+                                docker_key
                             ]
                         )
                     except:
                         print("error in jsonl file")
 
+            docker_key = get_docker_image_key(use_1r1m)
             ds_selected = [
                 ds_entry
                 for ds_entry in ds_selected
-                if ds_entry["docker_image"] not in existing_dockers
+                if ds_entry[docker_key] not in existing_dockers
             ]
 
     if skip_existing:
         old_jsonl_files_glob = f"{exp_name[:-1]}*"
         for old_jsonl_file in traj_dir_path.glob(old_jsonl_files_glob):
             with open(old_jsonl_file) as f:
+                docker_key = get_docker_image_key(use_1r1m)
                 existing_dockers = [
-                    loadline["ds"]["docker_image"]
+                    loadline["ds"][docker_key]
                     for line in f
                     for loadline in [json.loads(line)]
                     if loadline["reward"] == 1
                 ]
 
+            docker_key = get_docker_image_key(use_1r1m)
             ds_selected = [
                 ds_entry
                 for ds_entry in ds_selected
-                if ds_entry["docker_image"] not in existing_dockers
+                if ds_entry[docker_key] not in existing_dockers
             ]
 
     logger.info(
@@ -393,7 +414,7 @@ def runagent_multiple(
     # Prepull all Docker images in parallel before starting main execution
     if ds_selected and prepull_images:
         logger.info("Prepulling Docker images before starting main execution...")
-        prepull_docker_images(ds_selected, max_workers=max_workers)
+        prepull_docker_images(ds_selected, use_1r1m=use_1r1m, max_workers=max_workers)
         logger.info("Docker image prepull completed.")
 
     # with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
@@ -415,8 +436,9 @@ def runagent_multiple(
                 max_iterations=max_iterations,
                 scaffold=scaffold,
                 max_tokens=max_tokens,
+                use_1r1m=use_1r1m,
             ): ds_entry[
-                "docker_image"
+                get_docker_image_key(use_1r1m)
             ]  # <-- store the docker_image from ds_entry here
             for ds_entry in ds_selected
         }
