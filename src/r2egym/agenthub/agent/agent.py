@@ -14,7 +14,13 @@ from typing import Any, Dict, List, Optional, Tuple
 from pydantic import BaseModel
 
 import litellm
-from openai import OpenAI
+from openai import OpenAI, AzureOpenAI
+from azure.identity import (
+    ChainedTokenCredential,
+    AzureCliCredential,
+    DefaultAzureCredential,
+    get_bearer_token_provider,
+)
 from dotenv import load_dotenv
 
 from r2egym.agenthub.action import Action
@@ -35,6 +41,18 @@ from r2egym.agenthub.tools import (
 import traceback
 logger = get_logger(__name__)  # Logger for this module
 MAX_CONTEXT_TOKENS = 65536
+
+# Azure LLM Model supported models from SWE-agent
+AZURE_SUPPORTED_MODELS = [
+    "gpt-4o",
+    "o3",
+    "o3-mini",
+    "o4-mini",
+    "gpt-4.1",
+    "gpt-4.5-preview",
+    "o1",
+    "gpt-4.1-mini"
+]
 
 # CopilotClaudeModel supported models from SWE-agent
 COPILOT_CLAUDE_SUPPORTED_MODELS = [
@@ -244,10 +262,25 @@ class Agent:
                     kwargs = {}
                 if "o3" not in self.llm_name and "o4" not in self.llm_name:
                     kwargs["temperature"] = temperature
-                # Use CopilotClaudeModel API if model is supported
-                if self.llm_name in COPILOT_CLAUDE_SUPPORTED_MODELS:
+                # Handle prefix-based routing
+                if self.llm_name.startswith("trapi-"):
+                    # Extract model name after trapi- prefix
+                    actual_model = self.llm_name[6:]  # Remove "trapi-" prefix
+                    assert actual_model in AZURE_SUPPORTED_MODELS, f"Model '{actual_model}' not found in Azure supported models after removing 'trapi-' prefix"
+                    response = self._azure_api_call(
+                        model=actual_model,
+                        tools=tools,
+                        messages=messages_,
+                        timeout=self.llm_timeout,
+                        api_base=self.llm_base_url,
+                        **kwargs,
+                    )
+                elif self.llm_name.startswith("capi-"):
+                    # Extract model name after capi- prefix
+                    actual_model = self.llm_name[5:]  # Remove "capi-" prefix
+                    assert actual_model in COPILOT_CLAUDE_SUPPORTED_MODELS, f"Model '{actual_model}' not found in Copilot Claude supported models after removing 'capi-' prefix"
                     response = self._copilot_claude_api_call(
-                        model=self.llm_name,
+                        model=actual_model,
                         tools=tools,
                         messages=messages_,
                         timeout=self.llm_timeout,
@@ -294,9 +327,25 @@ class Agent:
                         if "o3" not in self.llm_name and "o4" not in self.llm_name:
                             kwargs["temperature"] = temperature
                         
-                        if self.llm_name in COPILOT_CLAUDE_SUPPORTED_MODELS:
+                        # Handle prefix-based routing for additional responses
+                        if self.llm_name.startswith("trapi-"):
+                            # Extract model name after trapi- prefix
+                            actual_model = self.llm_name[6:]  # Remove "trapi-" prefix
+                            assert actual_model in AZURE_SUPPORTED_MODELS, f"Model '{actual_model}' not found in Azure supported models after removing 'trapi-' prefix"
+                            additional_response = self._azure_api_call(
+                                model=actual_model,
+                                tools=tools,
+                                messages=messages_,
+                                timeout=self.llm_timeout,
+                                api_base=self.llm_base_url,
+                                **kwargs,
+                            )
+                        elif self.llm_name.startswith("capi-"):
+                            # Extract model name after capi- prefix
+                            actual_model = self.llm_name[5:]  # Remove "capi-" prefix
+                            assert actual_model in COPILOT_CLAUDE_SUPPORTED_MODELS, f"Model '{actual_model}' not found in Copilot Claude supported models after removing 'capi-' prefix"
                             additional_response = self._copilot_claude_api_call(
-                                model=self.llm_name,
+                                model=actual_model,
                                 tools=tools,
                                 messages=messages_,
                                 timeout=self.llm_timeout,
@@ -445,6 +494,96 @@ class Agent:
 
         # Make the API call
         response = client.chat.completions.create(**request_kwargs)
+        
+        return response
+
+    def _get_azure_client(self, model: str):
+        """Get or create a cached Azure OpenAI client for the specified model"""
+        # Create a cache key based on the model to handle different models
+        cache_key = f"_azure_client_{model}"
+        if not hasattr(self, cache_key) or getattr(self, cache_key) is None:
+            setattr(self, cache_key, self._create_azure_client(model))
+        return getattr(self, cache_key)
+
+    def _create_azure_client(self, model: str):
+        """Create Azure OpenAI client with proper authentication"""
+        # Model metadata mapping from SWE-agent
+        model_meta = {
+            "gpt-4o": ("2024-11-20", "msrne/shared", "2024-10-21"),
+            "o3": ("2025-04-16", "msrne/shared", "2025-04-01-preview"),
+            "o3-mini": ("2025-01-31", "msrne/shared", "2025-04-01-preview"),
+            "o4-mini": ("2025-04-16", "msrne/shared", "2025-04-01-preview"),
+            "gpt-4.1": ("2025-04-14", "gcr/shared", "2025-04-01-preview"),
+            "gpt-4.5-preview": ("2025-02-27", "msrne/shared", "2025-04-01-preview"),
+            "o1": ("2024-12-17", "msrne/shared", "2025-04-01-preview"),
+            "gpt-4.1-mini": ("2025-04-14", "msrne/shared", "2025-04-01-preview"),
+        }
+        
+        if model not in model_meta:
+            raise ValueError(f"{model} not in supported Azure models {AZURE_SUPPORTED_MODELS}")
+            
+        version, instance, api_version = model_meta[model]
+        deployment_name = re.sub(r"[^a-zA-Z0-9._-]", "", f"{model}_{version}")
+        endpoint = f"https://trapi.research.microsoft.com/{instance}"
+
+        # Set up Azure credentials
+        credential = get_bearer_token_provider(
+            ChainedTokenCredential(
+                AzureCliCredential(),
+                DefaultAzureCredential(
+                    exclude_cli_credential=True,
+                    exclude_environment_credential=True,
+                    exclude_shared_token_cache_credential=True,
+                    exclude_developer_cli_credential=True,
+                    exclude_powershell_credential=True,
+                    exclude_interactive_browser_credential=True,
+                    exclude_visual_studio_code_credentials=True,
+                    managed_identity_client_id=os.environ.get("DEFAULT_IDENTITY_CLIENT_ID"),
+                ),
+            ),
+            "api://trapi/.default",
+        )
+
+        # Create Azure OpenAI client
+        client = AzureOpenAI(
+            azure_endpoint=endpoint,
+            azure_ad_token_provider=credential,
+            api_version=api_version,
+        )
+        
+        # Store deployment name for API calls (using model-specific attribute)
+        setattr(self, f"_azure_deployment_name_{model}", deployment_name)
+        
+        return client
+
+    def _azure_api_call(self, model: str, messages: List[Dict[str, str]], 
+                        tools: Optional[List[Dict]] = None, timeout: int = 60, 
+                        api_base: Optional[str] = None, **kwargs) -> Any:
+        """
+        Call the Azure OpenAI API using the cached client.
+        """
+        client = self._get_azure_client(model)
+
+        # Build Azure request arguments
+        deployment_name = getattr(self, f"_azure_deployment_name_{model}")
+        azure_kwargs = {
+            "model": deployment_name,
+            "messages": messages,
+        }
+        
+        # Models that don't support custom temperature or top_p
+        not_temperature_models = ["o1", "o3", "o3-mini", "o4-mini"]
+        if model not in not_temperature_models:
+            if "temperature" in kwargs:
+                azure_kwargs["temperature"] = kwargs["temperature"]
+            if "top_p" in kwargs:
+                azure_kwargs["top_p"] = kwargs["top_p"]
+        
+        if tools:
+            azure_kwargs["tools"] = tools
+
+        # Make the API call
+        response = client.chat.completions.create(**azure_kwargs)
         
         return response
 
