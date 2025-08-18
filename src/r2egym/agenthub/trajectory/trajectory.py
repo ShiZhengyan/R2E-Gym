@@ -38,6 +38,9 @@ class TrajectoryStep(BaseModel):
     total_time_traj: float
     step_count: int
 
+    ## k_responses support
+    alternative_responses: Optional[List[Dict[str, Any]]] = None  # Store additional responses when k > 1
+
     @property
     def parsed_action(self):
         return Action.from_string(self.action)

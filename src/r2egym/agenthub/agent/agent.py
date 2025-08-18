@@ -185,8 +185,17 @@ class Agent:
         return token_count
 
     def model_query(
-        self, messages: List[Dict[str, str]], temperature: float = 0,) -> Dict[str, Any]:
-        """Query the LLM with the messages and measure execution time."""
+        self, messages: List[Dict[str, str]], temperature: float = 0, k_responses: int = 1) -> Tuple[List[Dict[str, Any]], float]:
+        """Query the LLM with the messages and measure execution time. 
+        
+        Args:
+            messages: List of message dictionaries for the conversation
+            temperature: Temperature for response generation
+            k_responses: Number of responses to generate (default=1 for backward compatibility)
+            
+        Returns:
+            Tuple of (list of responses, execution time). When k_responses=1, returns ([single_response], exec_time)
+        """
         response = None
         retries = 0
         tools = None
@@ -267,7 +276,56 @@ class Agent:
 
         # End timer, calculate total execution time, and include in response
         exec_time = time.time() - start_time
-        return response, exec_time
+        
+        # For k_responses > 1, generate additional responses
+        responses = [response]
+        if k_responses > 1:
+            for i in range(k_responses - 1):
+                additional_retries = 0
+                while additional_retries < self.max_retries:
+                    try:
+                        # Use same parameters as the first response
+                        kwargs = {
+                            "tool_choice": "none",
+                            "function_call": None,
+                        }
+                        if tools:
+                            kwargs = {}
+                        if "o3" not in self.llm_name and "o4" not in self.llm_name:
+                            kwargs["temperature"] = temperature
+                        
+                        if self.llm_name in COPILOT_CLAUDE_SUPPORTED_MODELS:
+                            additional_response = self._copilot_claude_api_call(
+                                model=self.llm_name,
+                                tools=tools,
+                                messages=messages_,
+                                timeout=self.llm_timeout,
+                                api_base=self.llm_base_url,
+                                **kwargs,
+                            )
+                        else:
+                            additional_response = litellm.completion(
+                                model=self.llm_name,
+                                tools=tools,
+                                messages=messages_,
+                                timeout=self.llm_timeout,
+                                api_base=self.llm_base_url,
+                                **kwargs,
+                            )
+                        responses.append(additional_response)
+                        self.logger.warning(f"Generated additional response {i+2}/{k_responses}")
+                        break
+                    except Exception as e:
+                        self.logger.error(f"Additional LLM query {i+2} failed @ {additional_retries}: {e}")
+                        additional_retries += 1
+                        if "RateLimitError" in str(e):
+                            time.sleep(60)
+                        if additional_retries >= self.max_retries:
+                            self.logger.error(f"Failed to generate additional response {i+2}/{k_responses} after {self.max_retries} retries")
+                            # Continue without this response rather than failing completely
+                            break
+        
+        return responses, exec_time
 
     def _get_copilot_client(self):
         """Get or create a cached GitHub Copilot client"""
@@ -485,6 +543,8 @@ class Agent:
         # additional metadata e.g. for hints / additional inputs etc
         metadata: Optional[Dict[str, Any]] = {},
         scaffold: str = "r2egym",
+        # k responses support
+        k_responses: int = 1,
     ):
         assert scaffold in ["r2egym", "openhands", "sweagent"], "Scaffold must be either r2egym or openhands or sweagent"
         self.scaffold = scaffold
@@ -514,7 +574,13 @@ class Agent:
         # Prepare problem_statement and structure from the environment
         problem_statement = env.runtime.get_task_instruction()
         self.logger.info(f"Problem Statement: {problem_statement}")
-        gt_patch = env.runtime.commit.get_patch(test_file=True, non_test_file=False)
+        
+        # Get GT patch - handle different modes (regular, swesmith, 1r1m)
+        if hasattr(env.runtime, 'commit') and env.runtime.commit is not None:
+            gt_patch = env.runtime.commit.get_patch(test_file=True, non_test_file=False)
+        else:
+            # For swesmith or 1r1m mode where commit object doesn't exist
+            gt_patch = ""
 
         # get system and instance prompts
         system_prompt = self.system_prompt_template
@@ -570,7 +636,9 @@ class Agent:
             # Query the LLM
             messages = copy.deepcopy(self.history)
             try:
-                response, llm_exec_time = self.model_query(messages, temperature)
+                responses, llm_exec_time = self.model_query(messages, temperature, k_responses)
+                response = responses[0]  # Use first response for execution
+                alternative_responses = responses[1:] if len(responses) > 1 else None  # Store alternatives
             except Exception as e:
                 self.logger.error(f"Error querying LLM: {e}")
                 self.logger.error(f"Error querying LLM: {traceback.format_exc()}")
@@ -608,8 +676,31 @@ class Agent:
                 thought, action = self.custom_parser(response)
             else:
                 thought, action = self.parse_response(assistant_message)
+            
+            # Parse alternative responses for structured data
+            parsed_alternative_responses = []
+            if alternative_responses:
+                for i, alt_resp in enumerate(alternative_responses):
+                    try:
+                        if self.use_fn_calling:
+                            alt_thought, alt_action = self.custom_parser(alt_resp)
+                        else:
+                            alt_message = alt_resp.choices[0].message.content if hasattr(alt_resp, 'choices') and alt_resp.choices else ""
+                            alt_thought, alt_action = self.parse_response(alt_message)
+                        
+                        parsed_alternative_responses.append({
+                            "thought": alt_thought,
+                            "action": alt_action.to_xml_string()
+                        })
+                    except Exception as e:
+                        self.logger.error(f"Failed to parse alternative response {i+2}: {e}")
+                        parsed_alternative_responses.append({
+                            "thought": "",
+                            "action": "",
+                            "parse_error": str(e)
+                        })
 
-            action_str = action.to_xml_string()
+            # action_str = action.to_xml_string()
             self.logger.info(f"THOUGHT:\n{thought}\n")
             self.logger.info(f"ACTION:\n{action.to_bashcmd()}\n")
 
@@ -723,6 +814,8 @@ class Agent:
                 total_step_time=total_step_time,
                 total_time_traj=total_time_traj,
                 step_count=step_count,
+                # k_responses support - store alternative responses
+                alternative_responses=parsed_alternative_responses if parsed_alternative_responses else None,
             )
             self.trajectory_steps.append(trajectory_step)
 

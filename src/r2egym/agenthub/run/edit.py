@@ -139,6 +139,7 @@ def run_agent_with_restarts(
     max_iterations: int = 1,
     scaffold: str = "r2egym",
     max_tokens: int = 65536,
+    k_responses: int = 1,
 ):
     """
     Iterative eval protocol:
@@ -180,6 +181,7 @@ def run_agent_with_restarts(
                 use_fn_calling=use_fn_calling,
                 scaffold=scaffold,
                 max_token_limit=max_tokens,
+                k_responses=k_responses,
             )
             # remove reproduce.py
             # env.runtime.run('rm reproduce_issue.py')
@@ -210,6 +212,7 @@ def runagent(
     scaffold: str = "r2egym",
     max_tokens: int = 65536,
     use_1r1m: bool = False,  # New parameter for 1r1m mode
+    k_responses: int = 1,  # Number of responses to collect from model_query
 ) -> Optional[str]:
     """
     Runs the editagent agent on a specified Docker image.
@@ -272,6 +275,7 @@ def runagent(
             max_iterations=max_iterations,
             scaffold=scaffold,
             max_tokens=max_tokens,
+            k_responses=k_responses,
         )
     except Exception as e:
         logger.error(
@@ -323,6 +327,7 @@ def runagent_multiple(
     prepull_images: bool = False,
     max_tokens: int = 65536,
     use_1r1m: bool = False,  # New parameter for 1r1m mode
+    k_responses: int = 1,  # Number of responses to collect from model_query
 ):
     """
     Runs the editagent agent on the first k Docker images.
@@ -417,8 +422,8 @@ def runagent_multiple(
         prepull_docker_images(ds_selected, use_1r1m=use_1r1m, max_workers=max_workers)
         logger.info("Docker image prepull completed.")
 
-    # with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-    with concurrent.futures.ProcessPoolExecutor(max_workers=max_workers) as executor:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+    # with concurrent.futures.ProcessPoolExecutor(max_workers=max_workers) as executor:
         # Submit all tasks to the executor using keyword arguments
         future_to_image = {
             executor.submit(
@@ -437,6 +442,7 @@ def runagent_multiple(
                 scaffold=scaffold,
                 max_tokens=max_tokens,
                 use_1r1m=use_1r1m,
+                k_responses=k_responses,
             ): ds_entry[
                 get_docker_image_key(use_1r1m)
             ]  # <-- store the docker_image from ds_entry here

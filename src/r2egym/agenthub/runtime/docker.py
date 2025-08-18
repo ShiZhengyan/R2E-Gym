@@ -122,7 +122,7 @@ class DockerRuntime(ExecutionEnvironment):
         self.repo_path = repo_path
         self.alt_path = alt_path
         self.command = command
-        if self.swebench_verified or self.swesmith:
+        if self.swesmith:
             # For swebench verified or swesmith, use the repo name from ds
             self.repo_name = self.ds["repo_name"]
         else:
