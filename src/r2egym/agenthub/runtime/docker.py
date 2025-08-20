@@ -23,7 +23,7 @@ import kubernetes
 import tarfile
 import io
 import os
-from r2egym.agenthub.utils.log import get_logger
+from r2egym.agenthub.utils.log import get_logger # TODO: FIX THIS
 import re
 from r2egym.agenthub.utils.utils import match_dockerimage_to_repo
 from r2egym.agenthub import SUPPORTED_REPOS, SKIP_FILES, SKIP_FILES_NEW, CMD_TIMEOUT
@@ -66,7 +66,7 @@ from swebench.harness.constants import (
 )
 from swebench.harness.test_spec.test_spec import TestSpec, make_test_spec
 from swebench.harness.log_parsers import MAP_REPO_TO_PARSER, get_eval_type
-from swebench.harness.grading import get_eval_tests_report, get_resolution_status
+from swebench.harness.grading import get_eval_tests_report, get_resolution_status, test_passed
 
 
 ##############################################################################
@@ -153,10 +153,11 @@ class DockerRuntime(ExecutionEnvironment):
             self.client = docker.from_env(timeout=120)
         elif self.backend == "kubernetes":
             # Try in-cluster config first, fallback to kubeconfig
-            try:
-                config.load_incluster_config()
-            except Exception:
-                config.load_kube_config()
+            # try:
+            #     config.load_incluster_config()
+            # except Exception:
+            #     config.load_kube_config()
+            config.load_kube_config()
             self.client = client.CoreV1Api()
 
         # Start the container
@@ -632,6 +633,9 @@ class DockerRuntime(ExecutionEnvironment):
         test_spec = swebench_instance_id_to_instance_mapping.get(swebench_instance_id)
         
         assert test_spec is not None, f"No test spec found for {swebench_instance_id}. Cannot create 1r1m eval script."
+        
+        # Store the test spec for later use in reward calculation
+        self.test_spec_1r1m = test_spec
         
         # Get test command and directives from the 1r1m dataset entry
         test_cmd = MAP_REPO_VERSION_TO_SPECS[test_spec.repo][test_spec.version]["test_cmd"]
@@ -1209,8 +1213,104 @@ class DockerRuntime(ExecutionEnvironment):
             return reward, output
         return reward
 
+    def _get_logs_eval_1r1m(
+        self, test_spec: TestSpec, content: str
+    ) -> tuple[dict[str, str], bool]:
+        """
+        Retrieve evaluation results for 1r1m tasks using proper SWE-bench grading logic.
+        Based on get_logs_eval from /home/zhengyanshi/project/SWE-bench/swebench/harness/grading.py
+        """
+        repo = test_spec.repo
+        version = test_spec.version
+        log_parser = MAP_REPO_TO_PARSER[repo]
+        test_cmd = MAP_REPO_VERSION_TO_SPECS[repo][version]["test_cmd"]
+        if isinstance(test_cmd, list):
+            test_cmd = test_cmd[-1]
+
+        # Check for bad codes that indicate failure
+        bad_codes = list(
+            filter(
+                lambda x: x in content,
+                [
+                    APPLY_PATCH_FAIL,
+                    RESET_FAILED,
+                    TESTS_ERROR,
+                    TESTS_TIMEOUT,
+                ],
+            )
+        )
+        if bad_codes:
+            self.logger.error(f"Bad code found in 1r1m log: {bad_codes}")
+            return {}, False
+        
+        # Check for proper test output markers (following SWE-bench grading logic)
+        if not (START_TEST_OUTPUT in content and END_TEST_OUTPUT in content):
+            # Test output markers not found - may indicate test execution failure
+            self.logger.warning("START_TEST_OUTPUT and END_TEST_OUTPUT markers not found in 1r1m test output")
+            return {}, False
+
+        # Extract content between test output markers
+        try:
+            content = content.split(START_TEST_OUTPUT)[1].split(END_TEST_OUTPUT)[0]
+        except IndexError:
+            self.logger.error("Failed to extract content between test output markers")
+            return {}, False
+        
+        # Parse the content using the repo-specific log parser
+        self.logger.info(f"Using swebench log_parser for 1r1m repo: {repo}")
+        return log_parser(content, test_spec), True
+
+    def _calculate_reward_1r1m(self, get_test_output=False, timeout: int = 300) -> float:
+        """
+        Calculate reward for 1r1m (One Repo One Model) tasks.
+        Uses the same logic as get_eval_report_1r1m from SWE-bench 1r1m evaluation.
+        """
+        try:
+            # Run the test script that was created during 1r1m setup
+            out, _ = self.run("/run_tests.sh", timeout=timeout)
+            
+            # Get evaluation status map using 1r1m-specific method with stored 1r1m test_spec
+            if not hasattr(self, 'test_spec_1r1m'):
+                raise AttributeError("1r1m test_spec not found. Make sure 1r1m environment was properly set up.")
+            eval_status_map, found = self._get_logs_eval_1r1m(self.test_spec_1r1m, out)
+            
+            if not found:
+                # If evaluation logs not found, return 0
+                if get_test_output:
+                    return 0.0, out
+                return 0.0
+            
+            # For 1r1m: Check if all tests in FAIL_TO_PASS are passed
+            # Default to assuming it fails unless proven otherwise
+            all_tests_passed = False
+            
+            # Only mark as resolved if we have tests to check and all of them pass
+            if "FAIL_TO_PASS" in self.ds and self.ds["FAIL_TO_PASS"]:
+                test_directives = self.ds["FAIL_TO_PASS"]
+                all_tests_passed = True
+                
+                for test_case in test_directives:
+                    if not test_passed(test_case, eval_status_map):
+                        all_tests_passed = False
+                        break
+            
+            # Reward is 1.0 if all tests pass, 0.0 otherwise (same as 1r1m logic)
+            reward = 1.0 if all_tests_passed else 0.0
+            
+            if get_test_output:
+                return reward, out
+            return reward
+            
+        except Exception as e:
+            self.logger.error(f"Error calculating 1r1m reward: {e}")
+            if get_test_output:
+                return 0.0, f"Error: {str(e)}"
+            return 0.0
+
     def _calculate_reward(self, get_test_output=False, timeout: int = 300) -> float:
-        if self.swebench_verified:
+        if self.is_1r1m:
+            return self._calculate_reward_1r1m(get_test_output=get_test_output, timeout=timeout)
+        elif self.swebench_verified:
             return self._calculate_reward_swebench(get_test_output=get_test_output, timeout=timeout)
         elif self.swesmith:
             return self._calculate_reward_swesmith(get_test_output=get_test_output, timeout=timeout)
