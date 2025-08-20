@@ -49,6 +49,7 @@ DOCKER_PATH = "/root/.venv/bin:/root/.local/bin:/root/.cargo/bin:/usr/local/sbin
 from swebench.harness.constants import (
     APPLY_PATCH_FAIL,
     END_TEST_OUTPUT,
+    FAIL_ONLY_REPOS,
     FAIL_TO_FAIL,
     FAIL_TO_PASS,
     KEY_INSTANCE_ID,
@@ -65,7 +66,7 @@ from swebench.harness.constants import (
     TestStatus,
 )
 from swebench.harness.test_spec.test_spec import TestSpec, make_test_spec
-from swebench.harness.log_parsers import MAP_REPO_TO_PARSER, get_eval_type
+from swebench.harness.log_parsers import MAP_REPO_TO_PARSER
 from swebench.harness.grading import get_eval_tests_report, get_resolution_status, test_passed
 
 
@@ -1168,8 +1169,10 @@ class DockerRuntime(ExecutionEnvironment):
             FAIL_TO_PASS: self.test_spec.FAIL_TO_PASS,
             PASS_TO_PASS: self.test_spec.PASS_TO_PASS,
         }
+        eval_type = EvalType.FAIL_ONLY if self.test_spec.repo in FAIL_ONLY_REPOS \
+            else EvalType.PASS_AND_FAIL
         report = get_eval_tests_report(
-            eval_status_map, eval_ref, eval_type=get_eval_type(self.test_spec)
+            eval_status_map, eval_ref, eval_type=eval_type
         )
         success = get_resolution_status(report) == ResolvedStatus.FULL.value
         if get_test_output:
@@ -1273,7 +1276,7 @@ class DockerRuntime(ExecutionEnvironment):
             if not hasattr(self, 'test_spec_1r1m'):
                 raise AttributeError("1r1m test_spec not found. Make sure 1r1m environment was properly set up.")
             eval_status_map, found = self._get_logs_eval_1r1m(self.test_spec_1r1m, out)
-            
+
             if not found:
                 # If evaluation logs not found, return 0
                 if get_test_output:
