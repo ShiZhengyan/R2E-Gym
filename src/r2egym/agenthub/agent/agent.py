@@ -526,8 +526,41 @@ class Agent:
 
                 # Make the API call
                 response = client.chat.completions.create(**request_kwargs)
-                
-                return response
+
+                # Handle Claude multi-message format; use attribute access and then serialize
+                if "claude" in model and len(response.choices) > 1:
+                    # Build merged message using object attribute access
+                    first_choice_msg = response.choices[0].message
+                    merged_content = first_choice_msg.content or ""
+                    merged_tool_calls: List[Dict[str, Any]] = []
+
+                    for choice in response.choices:
+                        msg = choice.message  # use choice.message instead of choice['message']
+                        tool_calls = getattr(msg, "tool_calls", None)
+                        if tool_calls:
+                            # tool_calls are Pydantic models; dump to dicts
+                            merged_tool_calls.extend([tc.model_dump() for tc in tool_calls])
+
+                    merged_message: Dict[str, Any] = {
+                        "role": "assistant",
+                        "content": merged_content,
+                    }
+                    if merged_tool_calls:
+                        merged_message["tool_calls"] = merged_tool_calls
+
+                    # Convert full response to dict, replace choices with a single merged message
+                    response_dict = response.model_dump()
+                    response_dict["choices"] = [{
+                        "finish_reason": response_dict["choices"][-1]["finish_reason"],
+                        "message": merged_message,
+                    }]
+
+                    litellm_response = litellm.types.utils.ModelResponse(**response_dict)
+                    return litellm_response
+
+                # Default path: serialize ChatCompletion object before wrapping
+                litellm_response = litellm.types.utils.ModelResponse(**response.model_dump())
+                return litellm_response
 
     def _get_azure_client(self, model: str):
         """Get or create a cached Azure OpenAI client for the specified model"""
@@ -616,8 +649,10 @@ class Agent:
 
         # Make the API call
         response = client.chat.completions.create(**azure_kwargs)
-        
-        return response
+
+        # Convert ChatCompletion to dict before creating litellm ModelResponse
+        litellm_response = litellm.types.utils.ModelResponse(**response.model_dump())
+        return litellm_response
 
     def parse_response(self, response: Dict[str, Any]) -> Tuple[str, Action]:
         """
